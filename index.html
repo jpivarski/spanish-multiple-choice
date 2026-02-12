@@ -7,13 +7,19 @@
   <script>
   const CONFIG = {
     numChoices: 10,
-    numChallenges: 5,
+    numChallengesByPhase: {
+      cognates: 10,
+      noncognates: 5,
+    },
     correctDelayMs: 250,
     incorrectDelayMs: 1000,
     hintAfterAttempt: 2,
   };
 
   let words = [];
+  let wordSets = { cognates: [], noncognates: [] };
+  let phaseIndex = 0;
+  const phases = ["cognates", "noncognates"];
   let challenges = [];
   let attempt = 1;
   let currentIndex = 0;
@@ -29,34 +35,43 @@
     const lines = text.trim().split(/\r?\n/);
     const header = lines.shift();
     if (!header) return [];
+    const headerCols = splitCsvLine(header);
+    const wordIndex = headerCols.indexOf("word");
+    const translationIndex = headerCols.indexOf("translation");
+    if (wordIndex === -1 || translationIndex === -1) return [];
     const out = [];
     for (const line of lines) {
       if (!line.trim()) continue;
-      const cols = [];
-      let cur = "";
-      let inQuotes = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (inQuotes && line[i + 1] === '"') {
-            cur += '"';
-            i++;
-          } else {
-            inQuotes = !inQuotes;
-          }
-        } else if (ch === ',' && !inQuotes) {
-          cols.push(cur);
-          cur = "";
-        } else {
-          cur += ch;
-        }
-      }
-      cols.push(cur);
-      if (cols.length >= 3) {
-        out.push({ word: cols[0], translation: cols[2] });
+      const cols = splitCsvLine(line);
+      if (cols.length > Math.max(wordIndex, translationIndex)) {
+        out.push({ word: cols[wordIndex], translation: cols[translationIndex] });
       }
     }
     return out;
+  }
+
+  function splitCsvLine(line) {
+    const cols = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (ch === "," && !inQuotes) {
+        cols.push(cur);
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    cols.push(cur);
+    return cols;
   }
 
   function pickChallenge() {
@@ -111,6 +126,13 @@
     const body = document.body;
     body.classList.remove("mode-audio", "mode-meaning");
     body.classList.add(mode === "audio" ? "mode-audio" : "mode-meaning");
+  }
+
+  function setPhase(phaseName) {
+    const body = document.body;
+    body.classList.remove("phase-cognates", "phase-noncognates");
+    body.classList.add(phaseName === "cognates" ? "phase-cognates" : "phase-noncognates");
+    $("phase-name").textContent = phaseName === "cognates" ? "Cognates" : "Non-cognates";
   }
 
   function makeButtons(labels) {
@@ -179,11 +201,19 @@
 
   function showStart() {
     $("start").classList.remove("hidden");
+    $("phase").classList.add("hidden");
+    $("app").classList.add("hidden");
+  }
+
+  function showPhase() {
+    $("start").classList.add("hidden");
+    $("phase").classList.remove("hidden");
     $("app").classList.add("hidden");
   }
 
   function showApp() {
     $("start").classList.add("hidden");
+    $("phase").classList.add("hidden");
     $("app").classList.remove("hidden");
   }
 
@@ -200,7 +230,13 @@
   function showChallenge() {
     if (!started) return;
     if (challenges.length === 0) {
-      showDone();
+      phaseIndex += 1;
+      if (phaseIndex >= phases.length) {
+        showDone();
+      } else {
+        setPhase(phases[phaseIndex]);
+        showPhase();
+      }
       return;
     }
 
@@ -275,6 +311,31 @@
   }
 
   function startGame() {
+    startPhase(0);
+  }
+
+  function skipToNoncognates() {
+    startPhase(1);
+  }
+
+  function continuePhase() {
+    startPhase(phaseIndex);
+  }
+
+  function startPhase(index) {
+    phaseIndex = index;
+    const phaseName = phases[phaseIndex];
+    words = wordSets[phaseName];
+    if (!words.length) {
+      setWordText("No data");
+      return;
+    }
+    setPhase(phaseName);
+    challenges = [];
+    const count = CONFIG.numChallengesByPhase[phaseName] || 0;
+    for (let i = 0; i < count; i++) {
+      challenges.push(pickChallenge());
+    }
     started = true;
     showApp();
     attempt = 1;
@@ -284,22 +345,24 @@
   }
 
   async function init() {
-    const res = await fetch("word-order.csv", { cache: "no-store" });
-    const text = await res.text();
-    words = parseCsv(text);
-    if (!words.length) {
+    const [cogRes, nonRes] = await Promise.all([
+      fetch("word-order-cognates.csv", { cache: "no-store" }),
+      fetch("word-order-noncognates.csv", { cache: "no-store" }),
+    ]);
+    const [cogText, nonText] = await Promise.all([cogRes.text(), nonRes.text()]);
+    wordSets.cognates = parseCsv(cogText);
+    wordSets.noncognates = parseCsv(nonText);
+    if (!wordSets.cognates.length && !wordSets.noncognates.length) {
       setWordText("No data");
       return;
-    }
-    challenges = [];
-    for (let i = 0; i < CONFIG.numChallenges; i++) {
-      challenges.push(pickChallenge());
     }
     showStart();
   }
 
   window.addEventListener("DOMContentLoaded", () => {
     $("start-button").addEventListener("click", startGame);
+    $("skip-button").addEventListener("click", skipToNoncognates);
+    $("phase-button").addEventListener("click", continuePhase);
     $("play").addEventListener("click", () => {
       const ch = currentChallenge();
       if (ch) playAudio(ch.word);
@@ -313,6 +376,8 @@
     :root {
       --bg1: #f6d365;
       --bg2: #fda085;
+      --bg3: #6dd5ed;
+      --bg4: #2193b0;
       --ink: #1b1b1b;
       --panel: rgba(255, 255, 255, 0.75);
       --audio: #2d9cdb;
@@ -338,6 +403,10 @@
       display: flex;
       align-items: stretch;
       justify-content: center;
+    }
+
+    body.phase-noncognates {
+      background: linear-gradient(160deg, var(--bg3), var(--bg4));
     }
 
     body::before {
@@ -470,6 +539,24 @@
       box-shadow: var(--shadow);
     }
 
+    .phase-screen {
+      min-height: 100svh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 14px;
+    }
+
+    .phase-title {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+    }
+
     .hidden { display: none; }
 
     @keyframes hint {
@@ -492,9 +579,15 @@
     }
   </style>
 </head>
-<body class="mode-audio">
+<body class="mode-audio phase-cognates">
   <div id="start" class="start-screen">
     <button id="start-button" class="start-button">Start</button>
+    <button id="skip-button" class="start-button">Skip Cognates</button>
+  </div>
+
+  <div id="phase" class="phase-screen hidden">
+    <div class="phase-title" id="phase-name">Cognates</div>
+    <button id="phase-button" class="start-button">Continue</button>
   </div>
 
   <div id="app" class="wrap hidden">
