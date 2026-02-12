@@ -2,9 +2,506 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal HTML</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Spanish Study</title>
+  <script>
+  const CONFIG = {
+    numChoices: 10,
+    numChallenges: 5,
+    correctDelayMs: 250,
+    incorrectDelayMs: 1000,
+    hintAfterAttempt: 3,
+  };
+
+  let words = [];
+  let challenges = [];
+  let attempt = 1;
+  let currentIndex = 0;
+  let stage = "audio"; // "audio" or "meaning"
+  let audioEl = null;
+  let started = false;
+
+  function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function parseCsv(text) {
+    const lines = text.trim().split(/\r?\n/);
+    const header = lines.shift();
+    if (!header) return [];
+    const out = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const cols = [];
+      let cur = "";
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else {
+            inQuotes = !inQuotes;
+          }
+        } else if (ch === ',' && !inQuotes) {
+          cols.push(cur);
+          cur = "";
+        } else {
+          cur += ch;
+        }
+      }
+      cols.push(cur);
+      if (cols.length >= 3) {
+        out.push({ word: cols[0], translation: cols[2] });
+      }
+    }
+    return out;
+  }
+
+  function pickChallenge() {
+    const startIndex = randInt(0, words.length - CONFIG.numChoices);
+    const stopIndex = startIndex + CONFIG.numChoices;
+    const trueIndex = randInt(startIndex, stopIndex - 1);
+    const { word, translation } = words[trueIndex];
+
+    const wordChoices = words.slice(startIndex, stopIndex).map(w => w.word);
+
+    const translationSet = new Set([translation]);
+    while (translationSet.size < CONFIG.numChoices) {
+      const candidate = words[randInt(0, words.length - 1)].translation;
+      translationSet.add(candidate);
+    }
+    const translationChoices = Array.from(translationSet);
+
+    shuffle(wordChoices);
+    shuffle(translationChoices);
+
+    return { word, translation, wordChoices, translationChoices };
+  }
+
+  function shuffle(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+
+  function $(id) {
+    return document.getElementById(id);
+  }
+
+  function setStatus(text) {
+    $("status").textContent = text;
+  }
+
+  function setAttemptText(text) {
+    $("attempt").textContent = text;
+  }
+
+  function setPromptText(text) {
+    $("prompt").textContent = text;
+  }
+
+  function setWordText(text) {
+    $("word").textContent = text;
+  }
+
+  function setMode(mode) {
+    const body = document.body;
+    body.classList.remove("mode-audio", "mode-meaning");
+    body.classList.add(mode === "audio" ? "mode-audio" : "mode-meaning");
+  }
+
+  function makeButtons(labels) {
+    const grid = $("grid");
+    grid.innerHTML = "";
+    for (let i = 0; i < labels.length; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "choice";
+      btn.textContent = labels[i];
+      btn.addEventListener("click", () => onChoice(i));
+      grid.appendChild(btn);
+    }
+  }
+
+  function disableButtons(disabled) {
+    const buttons = document.querySelectorAll(".choice");
+    for (const btn of buttons) btn.disabled = disabled;
+  }
+
+  function markButton(index, className) {
+    const btn = document.querySelectorAll(".choice")[index];
+    if (btn) btn.classList.add(className);
+  }
+
+  function flashHint(index) {
+    const btn = document.querySelectorAll(".choice")[index];
+    if (!btn) return;
+    btn.classList.add("hint");
+    setTimeout(() => btn.classList.remove("hint"), 700);
+  }
+
+  function playAudio(word) {
+    if (!audioEl) {
+      audioEl = new Audio();
+    }
+    audioEl.src = "audio/" + encodeURIComponent(word) + ".mp3";
+    audioEl.currentTime = 0;
+    audioEl.play().catch(() => {});
+  }
+
+  function currentChallenge() {
+    return challenges[currentIndex];
+  }
+
+  function advanceIndexAfterWrong() {
+    currentIndex += 1;
+    if (currentIndex >= challenges.length) {
+      attempt += 1;
+      currentIndex = 0;
+    }
+  }
+
+  function removeCurrentChallenge() {
+    challenges.splice(currentIndex, 1);
+    if (currentIndex >= challenges.length) {
+      currentIndex = 0;
+      attempt += 1;
+    }
+  }
+
+  function updateHeader() {
+    setStatus(challenges.length === 1 ? "1 left" : `${challenges.length} left`);
+    setAttemptText(`try ${attempt}`);
+  }
+
+  function showStart() {
+    $("start").classList.remove("hidden");
+    $("app").classList.add("hidden");
+  }
+
+  function showApp() {
+    $("start").classList.add("hidden");
+    $("app").classList.remove("hidden");
+  }
+
+  function showDone() {
+    setMode("audio");
+    setPromptText("");
+    setWordText("Done");
+    $("play").classList.add("hidden");
+    $("grid").innerHTML = "";
+    setStatus("");
+    setAttemptText("");
+  }
+
+  function showChallenge() {
+    if (!started) return;
+    if (challenges.length === 0) {
+      showDone();
+      return;
+    }
+
+    updateHeader();
+    const ch = currentChallenge();
+
+    if (stage === "audio") {
+      setMode("audio");
+      setPromptText("");
+      setWordText("");
+      $("play").classList.remove("hidden");
+      makeButtons(ch.wordChoices);
+      playAudio(ch.word);
+    } else {
+      setMode("meaning");
+      setPromptText("");
+      setWordText(ch.word);
+      $("play").classList.add("hidden");
+      makeButtons(ch.translationChoices);
+    }
+  }
+
+  function onChoice(choiceIndex) {
+    disableButtons(true);
+    const ch = currentChallenge();
+
+    if (stage === "audio") {
+      const correctIndex = ch.wordChoices.indexOf(ch.word);
+      if (choiceIndex === correctIndex) {
+        markButton(choiceIndex, "correct");
+        setTimeout(() => {
+          stage = "meaning";
+          disableButtons(false);
+          showChallenge();
+        }, CONFIG.correctDelayMs);
+      } else {
+        markButton(choiceIndex, "incorrect");
+        if (attempt >= CONFIG.hintAfterAttempt) {
+          flashHint(correctIndex);
+        }
+        setTimeout(() => {
+          stage = "audio";
+          advanceIndexAfterWrong();
+          disableButtons(false);
+          showChallenge();
+        }, CONFIG.incorrectDelayMs);
+      }
+      return;
+    }
+
+    const correctIndex = ch.translationChoices.indexOf(ch.translation);
+    if (choiceIndex === correctIndex) {
+      markButton(choiceIndex, "correct");
+      setTimeout(() => {
+        removeCurrentChallenge();
+        stage = "audio";
+        disableButtons(false);
+        showChallenge();
+      }, CONFIG.correctDelayMs);
+    } else {
+      markButton(choiceIndex, "incorrect");
+      if (attempt >= CONFIG.hintAfterAttempt) {
+        flashHint(correctIndex);
+      }
+      setTimeout(() => {
+        stage = "audio";
+        advanceIndexAfterWrong();
+        disableButtons(false);
+        showChallenge();
+      }, CONFIG.incorrectDelayMs);
+    }
+  }
+
+  function startGame() {
+    started = true;
+    showApp();
+    attempt = 1;
+    currentIndex = 0;
+    stage = "audio";
+    showChallenge();
+  }
+
+  async function init() {
+    const res = await fetch("word-order.csv", { cache: "no-store" });
+    const text = await res.text();
+    words = parseCsv(text);
+    if (!words.length) {
+      setWordText("No data");
+      return;
+    }
+    challenges = [];
+    for (let i = 0; i < CONFIG.numChallenges; i++) {
+      challenges.push(pickChallenge());
+    }
+    showStart();
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    $("start-button").addEventListener("click", startGame);
+    $("play").addEventListener("click", () => {
+      const ch = currentChallenge();
+      if (ch) playAudio(ch.word);
+    });
+    init().catch(() => {
+      setWordText("Load error");
+    });
+  });
+  </script>
+  <style>
+    :root {
+      --bg1: #f6d365;
+      --bg2: #fda085;
+      --ink: #1b1b1b;
+      --panel: rgba(255, 255, 255, 0.75);
+      --audio: #2d9cdb;
+      --meaning: #f2994a;
+      --good: #27ae60;
+      --bad: #eb5757;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: linear-gradient(160deg, var(--bg1), var(--bg2));
+      color: var(--ink);
+      font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", "Georgia", serif;
+    }
+
+    body {
+      min-height: 100svh;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: -20% -10% auto auto;
+      width: 60vmin;
+      height: 60vmin;
+      background: radial-gradient(circle, rgba(255,255,255,0.7), transparent 70%);
+      opacity: 0.35;
+      pointer-events: none;
+      transform: rotate(20deg);
+    }
+
+    body.mode-audio { --mode-color: var(--audio); }
+    body.mode-meaning { --mode-color: var(--meaning); }
+
+    .wrap {
+      width: min(520px, 100%);
+      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      font-size: 14px;
+      letter-spacing: 0.04em;
+      text-transform: lowercase;
+      opacity: 0.7;
+    }
+
+    .panel {
+      background: var(--panel);
+      border-radius: 20px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      animation: rise 0.45s ease;
+    }
+
+    .word {
+      font-size: 26px;
+      font-weight: 700;
+      text-align: center;
+      letter-spacing: 0.02em;
+      min-height: 32px;
+    }
+
+    .play {
+      border: none;
+      background: var(--mode-color);
+      color: white;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      font-size: 26px;
+      align-self: center;
+      box-shadow: var(--shadow);
+      transition: transform 0.1s ease;
+    }
+
+    .play:active {
+      transform: scale(0.95);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-auto-rows: 1fr;
+      gap: 10px;
+      min-height: 60vh;
+    }
+
+    .choice {
+      background: color-mix(in srgb, var(--mode-color) 25%, white);
+      border: 2px solid color-mix(in srgb, var(--mode-color) 60%, white);
+      color: #1d1d1d;
+      border-radius: 14px;
+      font-size: 16px;
+      padding: 10px 8px;
+      text-align: center;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+      transition: transform 0.08s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .choice:active {
+      transform: scale(0.98);
+    }
+
+    .choice.correct {
+      background: var(--good);
+      border-color: var(--good);
+      color: white;
+    }
+
+    .choice.incorrect {
+      background: var(--bad);
+      border-color: var(--bad);
+      color: white;
+    }
+
+    .choice.hint {
+      animation: hint 0.7s ease;
+    }
+
+    .start-screen {
+      min-height: 100svh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .start-button {
+      background: #111;
+      color: #fff;
+      border: none;
+      border-radius: 999px;
+      padding: 14px 32px;
+      font-size: 18px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      box-shadow: var(--shadow);
+    }
+
+    .hidden { display: none; }
+
+    @keyframes hint {
+      0% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+      30% { box-shadow: 0 0 0 6px rgba(255,255,255,0.9); }
+      60% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+      100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+    }
+
+    @keyframes rise {
+      from { transform: translateY(10px); opacity: 0.7; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+  </style>
 </head>
-<body>
-  Hello, world!
+<body class="mode-audio">
+  <div id="start" class="start-screen">
+    <button id="start-button" class="start-button">Start</button>
+  </div>
+
+  <div id="app" class="wrap hidden">
+    <div class="top">
+      <div id="status"></div>
+      <div id="attempt"></div>
+    </div>
+
+    <div class="panel">
+      <div id="prompt" class="prompt"></div>
+      <div id="word" class="word"></div>
+      <button id="play" class="play" aria-label="Play">▶</button>
+      <div id="grid" class="grid"></div>
+    </div>
+  </div>
 </body>
 </html>
