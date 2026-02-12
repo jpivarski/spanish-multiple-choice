@@ -10,7 +10,7 @@
     numChallenges: 5,
     correctDelayMs: 250,
     incorrectDelayMs: 1000,
-    hintAfterAttempt: 3,
+    hintAfterAttempt: 2,
   };
 
   let words = [];
@@ -140,7 +140,7 @@
     const btn = document.querySelectorAll(".choice")[index];
     if (!btn) return;
     btn.classList.add("hint");
-    setTimeout(() => btn.classList.remove("hint"), 700);
+    setTimeout(() => btn.classList.remove("hint"), 1500);
   }
 
   function playAudio(word) {
@@ -446,7 +446,7 @@
     }
 
     .choice.hint {
-      animation: hint 0.7s ease;
+      animation: hint 1s steps(1, end);
     }
 
     .start-screen {
@@ -473,10 +473,17 @@
     .hidden { display: none; }
 
     @keyframes hint {
-      0% { box-shadow: 0 0 0 rgba(255,255,255,0); }
-      30% { box-shadow: 0 0 0 6px rgba(255,255,255,0.9); }
-      60% { box-shadow: 0 0 0 rgba(255,255,255,0); }
-      100% { box-shadow: 0 0 0 rgba(255,255,255,0); }
+      0% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
+      10% { box-shadow: 0 0 0 8px rgba(255,255,255,0.95); filter: brightness(1.6); }
+      20% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
+      30% { box-shadow: 0 0 0 8px rgba(255,255,255,0.95); filter: brightness(1.6); }
+      40% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
+      50% { box-shadow: 0 0 0 8px rgba(255,255,255,0.95); filter: brightness(1.6); }
+      60% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
+      70% { box-shadow: 0 0 0 8px rgba(255,255,255,0.95); filter: brightness(1.6); }
+      80% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
+      90% { box-shadow: 0 0 0 8px rgba(255,255,255,0.95); filter: brightness(1.6); }
+      100% { box-shadow: 0 0 0 rgba(255,255,255,0); filter: brightness(1); }
     }
 
     @keyframes rise {
