@@ -26,6 +26,7 @@
   let stage = "audio"; // "audio" or "meaning"
   let audioEl = null;
   let started = false;
+  let pendingContinue = null;
 
   function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
@@ -227,6 +228,21 @@
     setAttemptText("");
   }
 
+  function showMeaningCard(word, translation, onDismiss) {
+    $("card-text").innerHTML = `&ldquo;${word}&rdquo;<br>means<br>&ldquo;${translation}&rdquo;`;
+    $("card").classList.remove("hidden");
+    pendingContinue = onDismiss;
+  }
+
+  function hideMeaningCard() {
+    $("card").classList.add("hidden");
+    if (pendingContinue) {
+      const next = pendingContinue;
+      pendingContinue = null;
+      next();
+    }
+  }
+
   function showChallenge() {
     if (!started) return;
     if (challenges.length === 0) {
@@ -291,10 +307,17 @@
     if (choiceIndex === correctIndex) {
       markButton(choiceIndex, "correct");
       setTimeout(() => {
-        removeCurrentChallenge();
-        stage = "audio";
-        disableButtons(false);
-        showChallenge();
+        const proceed = () => {
+          removeCurrentChallenge();
+          stage = "audio";
+          disableButtons(false);
+          showChallenge();
+        };
+        if (attempt > 1) {
+          showMeaningCard(ch.word, ch.translation, proceed);
+        } else {
+          proceed();
+        }
       }, CONFIG.correctDelayMs);
     } else {
       markButton(choiceIndex, "incorrect");
@@ -363,6 +386,7 @@
     $("start-button").addEventListener("click", startGame);
     $("skip-button").addEventListener("click", skipToNoncognates);
     $("phase-button").addEventListener("click", continuePhase);
+    $("card").addEventListener("click", hideMeaningCard);
     $("play").addEventListener("click", () => {
       const ch = currentChallenge();
       if (ch) playAudio(ch.word);
@@ -396,6 +420,14 @@
       background: linear-gradient(160deg, var(--bg1), var(--bg2));
       color: var(--ink);
       font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", "Georgia", serif;
+    }
+
+    div#status {
+      font-weight: bold;
+    }
+
+    div#attempt {
+      font-weight: bold;
     }
 
     body {
@@ -451,6 +483,29 @@
       flex-direction: column;
       gap: 12px;
       animation: rise 0.45s ease;
+    }
+
+    .card {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 10;
+    }
+
+    .card-inner {
+      background: #fff;
+      border-radius: 24px;
+      padding: 56px;
+      text-align: center;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      box-shadow: var(--shadow);
+      max-width: 520px;
     }
 
     .word {
@@ -602,6 +657,10 @@
       <button id="play" class="play" aria-label="Play">▶</button>
       <div id="grid" class="grid"></div>
     </div>
+  </div>
+
+  <div id="card" class="card hidden" role="button" aria-label="Continue">
+    <div class="card-inner" id="card-text"></div>
   </div>
 </body>
 </html>
